@@ -1,0 +1,194 @@
+import tkinter as tk
+from tkinter import filedialog, messagebox
+from PIL import Image, ImageEnhance, ImageFilter, ImageTk
+import pytesseract
+from gtts import gTTS
+import os
+import tempfile
+from pygame import mixer
+
+# Set the path to your Tesseract executable
+
+# Initialize global variables
+extracted_text = ""
+output_file = ""
+
+# Function to preprocess the image
+def preprocess_image(image_path):
+    img = Image.open(image_path)
+    if img.mode == 'RGBA':
+        img = img.convert('RGB')  # Drop the alpha channel
+    elif img.mode not in ['RGB', 'L']:  # Handle grayscale images too
+        img = img.convert('RGB')
+    enhancer = ImageEnhance.Contrast(img)
+    img = enhancer.enhance(2.0)  # Increase contrast
+    img = img.filter(ImageFilter.SHARPEN)  # Apply sharpness filter
+    return img
+
+# Function to extract text from image
+def image_to_text(image_path):
+    img = preprocess_image(image_path)
+    text = pytesseract.image_to_string(img)
+    return text
+
+# Function to convert text to speech
+def text_to_speech(text, output_file):
+    tts = gTTS(text=text, lang='en')
+    tts.save(output_file)
+    return output_file
+
+# Function to handle file selection
+def select_image_file():
+    file_path = filedialog.askopenfilename(title="Select Image File", filetypes=[("Image Files", ".jpg;.png;*.jpeg")])
+    return file_path
+
+# Function to handle process image button click event
+def process_image():
+    global extracted_text
+    global output_file
+    global image_display
+
+    try:
+        image_path = select_image_file()
+        if not image_path:
+            messagebox.showwarning("Warning", "No image file selected.")
+            return
+
+        extracted_text = image_to_text(image_path)
+        text_box.delete(1.0, tk.END)  # Clear previous text
+        text_box.insert(tk.END, extracted_text)
+
+        # Display the selected image
+        img = Image.open(image_path)
+        if img.mode == 'RGBA':
+            img = img.convert('RGB')  # Drop alpha channel for display
+        img.thumbnail((400, 400))  # Resize image for display
+        img = ImageTk.PhotoImage(img)
+        
+        if image_display is not None:
+            image_display.config(image=img)
+            image_display.image = img
+        else:
+            image_display = tk.Label(scrollable_frame, image=img, bg="#f0f0f0")
+            image_display.image = img
+            image_display.grid(row=2, column=0, columnspan=2, pady=10)
+
+        # Create a temporary file for the speech output
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.mp3')
+        output_file = temp_file.name
+
+        # Convert text to speech and save to the new output file
+        text_to_speech(extracted_text, output_file)
+        play_button.config(state=tk.NORMAL)  # Enable the play button
+
+        # Update scroll region
+        canvas.update_idletasks()
+        update_scrollable_frame_position()
+    except Exception as e:
+        messagebox.showerror("Error", f"Error processing image: {str(e)}")
+        print(f"Exception: {str(e)}")
+
+# Function to handle play speech button click event
+def play_speech():
+    try:
+        if not output_file:
+            messagebox.showwarning("Warning", "No speech file available.")
+            return
+        
+        mixer.quit()  # Ensure mixer is stopped before loading a new file
+        mixer.init()
+        mixer.music.load(output_file)
+        mixer.music.play()
+    except Exception as e:
+        messagebox.showerror("Error", f"Error playing speech: {str(e)}")
+        print(f"Exception: {str(e)}")
+
+# Function to handle save as button click event
+def save_as():
+    global output_file
+    try:
+        if not extracted_text:
+            messagebox.showwarning("Warning", "No text to save.")
+            return
+
+        # Ask the user to choose a file location and name
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".mp3",
+            filetypes=[("MP3 Files", ".mp3"), ("All Files", ".*")],
+            title="Save As"
+        )
+        
+        if not file_path:
+            return  # User canceled the dialog
+
+        # Save the text to speech at the chosen location
+        text_to_speech(extracted_text, output_file=file_path)
+        messagebox.showinfo("Info", f"File saved as {file_path}")
+    except Exception as e:
+        messagebox.showerror("Error", f"Error saving file: {str(e)}")
+        print(f"Exception: {str(e)}")
+
+# Function to update the position of the scrollable frame
+def update_scrollable_frame_position():
+    canvas_width = canvas.winfo_width()
+    frame_width = scrollable_frame.winfo_reqwidth()
+    x = (canvas_width - frame_width) // 2
+    canvas.coords(scrollable_frame_window, (x, 0))
+    canvas.config(scrollregion=canvas.bbox("all"))
+
+# Function to handle window resizing
+def on_resize(event):
+    update_scrollable_frame_position()
+
+# Main GUI setup
+root = tk.Tk()
+root.title("Image to Text to Speech Converter")
+
+# Set window size and background color
+root.geometry("600x800")
+root.configure(bg="#f0f0f0")
+
+# Create a canvas for scrollable content
+canvas = tk.Canvas(root, bg="#f0f0f0")
+canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+# Add vertical scrollbar to the canvas
+scrollbar = tk.Scrollbar(root, orient=tk.VERTICAL, command=canvas.yview)
+scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+# Configure canvas to use the scrollbar
+canvas.config(yscrollcommand=scrollbar.set)
+
+# Create a frame to hold all the widgets inside the canvas
+scrollable_frame = tk.Frame(canvas, bg="#f0f0f0")
+
+# Add the frame to the canvas
+scrollable_frame_window = canvas.create_window((0, 0), window=scrollable_frame, anchor=tk.NW)
+
+# Add widgets to the scrollable frame
+label = tk.Label(scrollable_frame, text="Image to Speech Converter", font=("Arial", 24, "bold"), bg="#f0f0f0", fg="#333")
+label.grid(row=0, column=0, columnspan=2, pady=20)
+
+process_button = tk.Button(scrollable_frame, text="Select Image", command=process_image, font=("Arial", 14), bg="#000000", fg="white", padx=10, pady=5)
+process_button.grid(row=1, column=0, columnspan=2, pady=10)
+
+# Initialize image display label
+image_display = None  # Placeholder for image
+
+text_box = tk.Text(scrollable_frame, height=10, width=60, wrap=tk.WORD, font=("Arial", 12), bg="#ffffff", fg="black", borderwidth=2, relief="solid")
+text_box.grid(row=3, column=0, columnspan=2, pady=10)
+
+play_button = tk.Button(scrollable_frame, text="Play Speech", command=play_speech, font=("Arial", 14), bg="#000000", fg="white", padx=10, pady=5, state=tk.DISABLED)
+play_button.grid(row=4, column=0, columnspan=2, pady=10)
+
+save_button = tk.Button(scrollable_frame, text="Save As", command=save_as, font=("Arial", 14), bg="#000000", fg="white", padx=10, pady=5)
+save_button.grid(row=5, column=0, columnspan=2, pady=10)
+
+# Bind resize event to update scrollable frame position
+root.bind("<Configure>", on_resize)
+
+# Initial position update
+update_scrollable_frame_position()
+
+# Run the main tkinter event loop
+root.mainloop() 
